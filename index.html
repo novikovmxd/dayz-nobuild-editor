@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>NoBuildZones — редактор</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header id="topbar">
+    <div class="brand">🚫 NoBuildZones</div>
+    <div class="actions">
+        <button id="btn-open">Открыть config.json</button>
+        <button id="btn-save" disabled>💾 Сохранить (Ctrl+S)</button>
+        <button id="btn-download" disabled>⬇ Скачать</button>
+        <span class="sep"></span>
+        <button id="btn-layer">🛰 Спутник</button>
+        <button id="btn-add-zone" disabled>＋ Добавить зону</button>
+        <span id="file-name" class="filename">— файл не открыт —</span>
+    </div>
+    <div class="coord-hud" id="coord-hud"></div>
+</header>
+
+<main id="workspace">
+    <aside id="panel">
+        <section class="card">
+            <h3>Общие</h3>
+            <label>Сообщение при блокировке
+                <textarea id="msg-blocked" rows="2" disabled></textarea>
+            </label>
+            <label class="row">
+                <input type="checkbox" id="admin-bypass" disabled>
+                AdminBypass (админы обходят блокировку)
+            </label>
+        </section>
+
+        <section class="card">
+            <h3>Блокируемые классы <span id="blk-count" class="count"></span></h3>
+            <ul id="blocked-list" class="chips"></ul>
+            <div class="row">
+                <input type="text" id="blk-input" placeholder="TerritoryFlagKit…" disabled>
+                <button id="blk-add" disabled>＋</button>
+            </div>
+        </section>
+
+        <section class="card">
+            <h3>Whitelist Steam64 <span id="wl-count" class="count"></span></h3>
+            <ul id="whitelist-list" class="chips"></ul>
+            <div class="row">
+                <input type="text" id="wl-input" placeholder="76561198…" disabled>
+                <button id="wl-add" disabled>＋</button>
+            </div>
+        </section>
+
+        <section class="card">
+            <h3>Зоны <span id="zone-count" class="count"></span></h3>
+            <ul id="zone-list" class="zone-list"></ul>
+        </section>
+    </aside>
+
+    <div id="map"></div>
+</main>
+
+<div id="toast" class="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

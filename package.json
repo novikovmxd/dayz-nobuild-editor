@@ -1,0 +1,11 @@
+{
+  "name": "dm-nobuild-editor",
+  "version": "1.0.0",
+  "description": "Visual editor for DayZ NoBuildZones config.json",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node serve.js",
+    "test": "node test-roundtrip.js"
+  }
+}
