@@ -113,3 +113,40 @@ textarea { resize: vertical; min-height: 36px; font-family: inherit; }
 
 .adding-zone-cursor #map { cursor: crosshair; }
 .adding-zone-cursor .leaflet-clickable { cursor: crosshair !important; }
+
+.vertex-handle {
+    background: var(--accent); border: 2px solid #fff; border-radius: 50%;
+    width: 8px !important; height: 8px !important; margin-left: -4px !important; margin-top: -4px !important;
+    cursor: move;
+}
+.vertex-handle.active { background: #ffcc4d; }
+
+.polygon-draft { pointer-events: none; }
+.draft-vertex {
+    background: #6cb1ff; border: 2px solid #fff; border-radius: 50%;
+    width: 6px !important; height: 6px !important; margin-left: -3px !important; margin-top: -3px !important;
+    pointer-events: none;
+}
+
+.loc-label {
+    color: #fff; text-shadow: 0 0 3px #000, 0 0 2px #000, 1px 1px 0 #000;
+    font-size: 11px; font-weight: 500; white-space: nowrap;
+    pointer-events: none; background: transparent; border: none;
+    transform: translate(-50%, -50%);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.loc-capital { font-size: 14px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; }
+.loc-city { font-size: 12px; font-weight: 600; }
+.loc-village { font-size: 11px; font-weight: 500; }
+.loc-local { font-size: 10px; font-weight: 400; color: #d9d9d9; }
+
+.zone-group { margin-top: 8px; }
+.zone-group:first-of-type { margin-top: 0; }
+.zone-group h4 {
+    margin: 0 0 4px; font-size: 11px; color: var(--fg-dim);
+    font-weight: 500; text-transform: uppercase; letter-spacing: 0.4px;
+}
+.zone-group h4 .count {
+    float: right; background: var(--bg3); padding: 0 6px; border-radius: 8px;
+    font-size: 10px; color: var(--fg); text-transform: none; letter-spacing: 0;
+}

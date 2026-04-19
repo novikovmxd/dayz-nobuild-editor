@@ -8,9 +8,10 @@ const TILE_BASE = 'https://static.xam.nu/dayz/maps/chernarusplus/1.27';
 const state = {
     fileHandle: null,
     config: null,
-    activeZoneIdx: -1,
-    mapLayer: 'topographic',
-    adding: false,
+    active: null,            // { kind: 'circle'|'polygon', idx } | null
+    mapLayer: 'satellite',
+    addingCircle: false,
+    addingPolygon: null,     // { points: [[x,z], ...], poly, markers: [] } | null
 };
 
 // ─── IndexedDB for file handle persistence ───────────────────────────────────
@@ -92,6 +93,40 @@ const tileOpts = {
 const tileUrl = (type) => `${TILE_BASE}/${type}/{z}/{x}/{y}.webp`;
 let tileLayer = L.tileLayer(tileUrl(state.mapLayer), tileOpts).addTo(map);
 
+// ─── Location labels (cities, villages, etc.) ────────────────────────────────
+// Loaded from xam.nu's map metadata JSON. Coordinates there are in xam.nu's
+// Leaflet frame: p[0]=lat, p[1]=lng, with lat = 256*z/size - 256, lng = 256*x/size.
+// Inverse: world_x = p[1]*size/256, world_z = (p[0]+256)*size/256.  size=15360
+// → multiplier is exactly 60.
+const LABEL_TIERS = new Set(['capital', 'city', 'village', 'local']);
+const labelsLayer = L.layerGroup().addTo(map);
+async function loadLocationLabels() {
+    try {
+        const r = await fetch('https://static.xam.nu/dayz/json/chernarusplus/1.29.json');
+        if (!r.ok) return;
+        const d = await r.json();
+        for (const loc of d.markers?.locations ?? []) {
+            if (!LABEL_TIERS.has(loc.w) || loc.a === 0) continue;
+            const wx = loc.p[1] * 60;
+            const wz = (loc.p[0] + 256) * 60;
+            const name = loc.s?.[1] || loc.s?.[0] || '';
+            if (!name) continue;
+            L.marker(toLatLng(wx, wz), {
+                interactive: false, keyboard: false,
+                icon: L.divIcon({
+                    className: `loc-label loc-${loc.w}`,
+                    html: name,
+                    iconSize: null,
+                }),
+                zIndexOffset: -1000,
+            }).addTo(labelsLayer);
+        }
+    } catch (err) {
+        console.warn('Не удалось загрузить подписи локаций:', err);
+    }
+}
+loadLocationLabels();
+
 // HUD: world coords under cursor
 const hud = document.getElementById('coord-hud');
 map.on('mousemove', (e) => {
@@ -101,108 +136,150 @@ map.on('mousemove', (e) => {
 map.on('mouseout', () => { hud.textContent = ''; });
 
 // ─── Zone layers ──────────────────────────────────────────────────────────────
-const zoneLayers = new Map(); // idx → { circle, tooltip, handle }
+const circleLayers = new Map();  // idx → { shape, handle }
+const polygonLayers = new Map(); // idx → { shape, handles: L.marker[] }
 
-function buildZoneLayer(idx) {
+const COLOR = { base: '#ff6b35', active: '#ffcc4d' };
+
+function buildCircleLayer(idx) {
     const zone = state.config.Zones.Circles[idx];
-    const [x, , z] = zone.Center;
-    const center = toLatLng(x, z);
+    const center = toLatLng(zone.Center[0], zone.Center[2]);
 
-    const circle = L.circle(center, {
+    const shape = L.circle(center, {
         radius: zone.Radius,
-        color: '#ff6b35',
-        fillColor: '#ff6b35',
-        fillOpacity: 0.18,
-        weight: 2,
-        bubblingMouseEvents: false,
+        color: COLOR.base, fillColor: COLOR.base, fillOpacity: 0.18,
+        weight: 2, bubblingMouseEvents: false,
     }).addTo(map);
 
-    circle.bindTooltip(zone.Name || '(без имени)', {
-        permanent: true, direction: 'top', offset: [0, -4],
-        className: 'zone-tooltip',
+    shape.bindTooltip(zone.Name || '(без имени)', {
+        permanent: true, direction: 'top', offset: [0, -4], className: 'zone-tooltip',
     });
 
-    circle.on('click', (e) => {
-        L.DomEvent.stopPropagation(e);
-        selectZone(idx);
-    });
-    circle.on('mousedown', (e) => startDragCenter(idx, e));
+    shape.on('click', (e) => { L.DomEvent.stopPropagation(e); selectZone('circle', idx); });
+    shape.on('mousedown', (e) => startDragCircleCenter(idx, e));
 
     const handle = L.marker(edgePoint(center, zone.Radius), {
         icon: L.divIcon({ className: 'radius-handle', iconSize: [10, 10] }),
         draggable: false, keyboard: false, interactive: true,
     }).addTo(map);
-    handle.on('mousedown', (e) => startDragRadius(idx, e));
+    handle.on('mousedown', (e) => startDragCircleRadius(idx, e));
 
-    zoneLayers.set(idx, { circle, handle });
+    circleLayers.set(idx, { shape, handle });
 }
 
 function edgePoint(centerLL, radius) {
-    // East edge in world coords = (x + radius, z)
     const [x, z] = fromLatLng(centerLL);
     return toLatLng(x + radius, z);
 }
 
-function refreshZoneLayer(idx) {
-    const layer = zoneLayers.get(idx);
+function refreshCircleLayer(idx) {
+    const layer = circleLayers.get(idx);
     if (!layer) return;
     const zone = state.config.Zones.Circles[idx];
     const center = toLatLng(zone.Center[0], zone.Center[2]);
-    layer.circle.setLatLng(center);
-    layer.circle.setRadius(zone.Radius);
-    layer.circle.setTooltipContent(zone.Name || '(без имени)');
+    layer.shape.setLatLng(center);
+    layer.shape.setRadius(zone.Radius);
+    layer.shape.setTooltipContent(zone.Name || '(без имени)');
     layer.handle.setLatLng(edgePoint(center, zone.Radius));
-    // Highlight
-    const active = idx === state.activeZoneIdx;
-    layer.circle.setStyle({
-        color: active ? '#ffcc4d' : '#ff6b35',
-        fillColor: active ? '#ffcc4d' : '#ff6b35',
+    const active = isActive('circle', idx);
+    layer.shape.setStyle({
+        color: active ? COLOR.active : COLOR.base,
+        fillColor: active ? COLOR.active : COLOR.base,
         weight: active ? 3 : 2,
         fillOpacity: active ? 0.3 : 0.18,
     });
 }
 
-function removeZoneLayer(idx) {
-    const layer = zoneLayers.get(idx);
+function removeCircleLayer(idx) {
+    const layer = circleLayers.get(idx);
     if (!layer) return;
-    map.removeLayer(layer.circle);
+    map.removeLayer(layer.shape);
     map.removeLayer(layer.handle);
-    zoneLayers.delete(idx);
+    circleLayers.delete(idx);
+}
+
+function buildPolygonLayer(idx) {
+    const poly = state.config.Zones.Polygons[idx];
+    const latlngs = poly.Points.map(p => toLatLng(p[0], p[2]));
+
+    const shape = L.polygon(latlngs, {
+        color: COLOR.base, fillColor: COLOR.base, fillOpacity: 0.18,
+        weight: 2, bubblingMouseEvents: false,
+    }).addTo(map);
+
+    shape.bindTooltip(poly.Name || '(без имени)', {
+        permanent: true, direction: 'top', offset: [0, -4], className: 'zone-tooltip',
+    });
+
+    shape.on('click', (e) => { L.DomEvent.stopPropagation(e); selectZone('polygon', idx); });
+    shape.on('mousedown', (e) => startDragPolygonBody(idx, e));
+
+    const handles = poly.Points.map((p, vi) => {
+        const h = L.marker(toLatLng(p[0], p[2]), {
+            icon: L.divIcon({ className: 'vertex-handle', iconSize: [8, 8] }),
+            draggable: false, keyboard: false, interactive: true,
+        }).addTo(map);
+        h.on('mousedown', (e) => startDragPolygonVertex(idx, vi, e));
+        return h;
+    });
+
+    polygonLayers.set(idx, { shape, handles });
+}
+
+function refreshPolygonLayer(idx) {
+    const layer = polygonLayers.get(idx);
+    if (!layer) return;
+    const poly = state.config.Zones.Polygons[idx];
+    const latlngs = poly.Points.map(p => toLatLng(p[0], p[2]));
+    layer.shape.setLatLngs(latlngs);
+    layer.shape.setTooltipContent(poly.Name || '(без имени)');
+    layer.handles.forEach((h, i) => h.setLatLng(latlngs[i]));
+    const active = isActive('polygon', idx);
+    layer.shape.setStyle({
+        color: active ? COLOR.active : COLOR.base,
+        fillColor: active ? COLOR.active : COLOR.base,
+        weight: active ? 3 : 2,
+        fillOpacity: active ? 0.3 : 0.18,
+    });
+}
+
+function removePolygonLayer(idx) {
+    const layer = polygonLayers.get(idx);
+    if (!layer) return;
+    map.removeLayer(layer.shape);
+    layer.handles.forEach(h => map.removeLayer(h));
+    polygonLayers.delete(idx);
 }
 
 function rebuildAllZoneLayers() {
-    for (const idx of [...zoneLayers.keys()]) removeZoneLayer(idx);
+    for (const idx of [...circleLayers.keys()]) removeCircleLayer(idx);
+    for (const idx of [...polygonLayers.keys()]) removePolygonLayer(idx);
     if (!state.config) return;
-    for (let i = 0; i < state.config.Zones.Circles.length; i++) buildZoneLayer(i);
+    for (let i = 0; i < state.config.Zones.Circles.length; i++) buildCircleLayer(i);
+    for (let i = 0; i < state.config.Zones.Polygons.length; i++) buildPolygonLayer(i);
 }
 
-function startDragCenter(idx, e) {
+function startDragCircleCenter(idx, e) {
     L.DomEvent.stopPropagation(e);
     if (e.originalEvent) L.DomEvent.preventDefault(e.originalEvent);
     map.dragging.disable();
     const zone = state.config.Zones.Circles[idx];
     const startLL = e.latlng;
-    const startCX = zone.Center[0];
-    const startCZ = zone.Center[2];
-
+    const startCX = zone.Center[0], startCZ = zone.Center[2];
     const onMove = (ev) => {
         const dLng = ev.latlng.lng - startLL.lng;
         const dLat = ev.latlng.lat - startLL.lat;
         zone.Center = [round2(startCX + dLng), 0, round2(startCZ + dLat)];
-        refreshZoneLayer(idx);
-        if (idx === state.activeZoneIdx) updateZoneCardInputs();
+        refreshCircleLayer(idx);
+        if (isActive('circle', idx)) updateZoneCardInputs();
     };
-    const onUp = () => {
-        map.off('mousemove', onMove);
-        map.off('mouseup', onUp);
-        map.dragging.enable();
-    };
+    const onUp = () => { map.off('mousemove', onMove); map.off('mouseup', onUp); map.dragging.enable(); };
     map.on('mousemove', onMove);
     map.on('mouseup', onUp);
-    selectZone(idx);
+    selectZone('circle', idx);
 }
 
-function startDragRadius(idx, e) {
+function startDragCircleRadius(idx, e) {
     L.DomEvent.stopPropagation(e);
     if (e.originalEvent) L.DomEvent.preventDefault(e.originalEvent);
     map.dragging.disable();
@@ -210,52 +287,159 @@ function startDragRadius(idx, e) {
     const onMove = (ev) => {
         const [cx, cz] = [zone.Center[0], zone.Center[2]];
         const [mx, mz] = fromLatLng(ev.latlng);
-        const r = Math.max(5, Math.round(Math.hypot(mx - cx, mz - cz)));
-        zone.Radius = r;
-        refreshZoneLayer(idx);
-        if (idx === state.activeZoneIdx) updateZoneCardInputs();
+        zone.Radius = Math.max(5, Math.round(Math.hypot(mx - cx, mz - cz)));
+        refreshCircleLayer(idx);
+        if (isActive('circle', idx)) updateZoneCardInputs();
     };
-    const onUp = () => {
-        map.off('mousemove', onMove);
-        map.off('mouseup', onUp);
-        map.dragging.enable();
-    };
+    const onUp = () => { map.off('mousemove', onMove); map.off('mouseup', onUp); map.dragging.enable(); };
     map.on('mousemove', onMove);
     map.on('mouseup', onUp);
-    selectZone(idx);
+    selectZone('circle', idx);
+}
+
+function startDragPolygonBody(idx, e) {
+    L.DomEvent.stopPropagation(e);
+    if (e.originalEvent) L.DomEvent.preventDefault(e.originalEvent);
+    map.dragging.disable();
+    const poly = state.config.Zones.Polygons[idx];
+    const startLL = e.latlng;
+    const startPoints = poly.Points.map(p => [p[0], p[2]]);
+    const onMove = (ev) => {
+        const dLng = ev.latlng.lng - startLL.lng;
+        const dLat = ev.latlng.lat - startLL.lat;
+        poly.Points = startPoints.map(([x, z]) => [round2(x + dLng), 0, round2(z + dLat)]);
+        refreshPolygonLayer(idx);
+        if (isActive('polygon', idx)) updateZoneCardInputs();
+    };
+    const onUp = () => { map.off('mousemove', onMove); map.off('mouseup', onUp); map.dragging.enable(); };
+    map.on('mousemove', onMove);
+    map.on('mouseup', onUp);
+    selectZone('polygon', idx);
+}
+
+function startDragPolygonVertex(idx, vi, e) {
+    L.DomEvent.stopPropagation(e);
+    if (e.originalEvent) L.DomEvent.preventDefault(e.originalEvent);
+    map.dragging.disable();
+    const poly = state.config.Zones.Polygons[idx];
+    const onMove = (ev) => {
+        const [x, z] = fromLatLng(ev.latlng);
+        poly.Points[vi] = [round2(x), 0, round2(z)];
+        refreshPolygonLayer(idx);
+        if (isActive('polygon', idx)) updateZoneCardInputs();
+    };
+    const onUp = () => { map.off('mousemove', onMove); map.off('mouseup', onUp); map.dragging.enable(); };
+    map.on('mousemove', onMove);
+    map.on('mouseup', onUp);
+    selectZone('polygon', idx);
 }
 
 const round2 = (v) => Math.round(v * 100) / 100;
 
 // ─── Zone selection ───────────────────────────────────────────────────────────
-function selectZone(idx) {
-    const prev = state.activeZoneIdx;
-    state.activeZoneIdx = idx;
-    if (prev >= 0 && prev < state.config.Zones.Circles.length) refreshZoneLayer(prev);
-    if (idx >= 0) refreshZoneLayer(idx);
+function isActive(kind, idx) {
+    return state.active && state.active.kind === kind && state.active.idx === idx;
+}
+
+function refreshActiveLayer(prev) {
+    if (!prev) return;
+    if (prev.kind === 'circle' && prev.idx < (state.config?.Zones?.Circles?.length ?? 0)) refreshCircleLayer(prev.idx);
+    if (prev.kind === 'polygon' && prev.idx < (state.config?.Zones?.Polygons?.length ?? 0)) refreshPolygonLayer(prev.idx);
+}
+
+function selectZone(kind, idx) {
+    const prev = state.active;
+    state.active = (kind && idx >= 0) ? { kind, idx } : null;
+    refreshActiveLayer(prev);
+    if (state.active) {
+        if (kind === 'circle') refreshCircleLayer(idx);
+        else refreshPolygonLayer(idx);
+    }
     renderZoneList();
-    if (idx >= 0) {
-        const zone = state.config.Zones.Circles[idx];
-        map.panTo(toLatLng(zone.Center[0], zone.Center[2]));
+    if (state.active) {
+        if (kind === 'circle') {
+            const z = state.config.Zones.Circles[idx];
+            map.panTo(toLatLng(z.Center[0], z.Center[2]));
+        } else {
+            const p = state.config.Zones.Polygons[idx];
+            if (p.Points.length) map.panTo(polygonCenter(p.Points));
+        }
     }
 }
 
-// ─── Adding new zone ──────────────────────────────────────────────────────────
-document.getElementById('btn-add-zone').addEventListener('click', () => {
-    state.adding = !state.adding;
-    document.body.classList.toggle('adding-zone-cursor', state.adding);
-    document.getElementById('btn-add-zone').style.background = state.adding ? 'var(--accent)' : '';
-    toast(state.adding ? 'Кликни по карте, чтобы создать зону (ESC — отмена)' : 'Отменено');
+function polygonCenter(points) {
+    let sx = 0, sz = 0;
+    for (const p of points) { sx += p[0]; sz += p[2]; }
+    return toLatLng(sx / points.length, sz / points.length);
+}
+
+// ─── Adding new circle ────────────────────────────────────────────────────────
+document.getElementById('btn-add-circle').addEventListener('click', () => {
+    if (state.addingPolygon) cancelPolygonDraft();
+    state.addingCircle = !state.addingCircle;
+    document.body.classList.toggle('adding-zone-cursor', state.addingCircle);
+    document.getElementById('btn-add-circle').style.background = state.addingCircle ? 'var(--accent)' : '';
+    toast(state.addingCircle ? 'Кликни по карте, чтобы создать круг (ESC — отмена)' : 'Отменено');
 });
 
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && state.adding) {
-        state.adding = false;
+// ─── Adding new polygon ───────────────────────────────────────────────────────
+document.getElementById('btn-add-polygon').addEventListener('click', () => {
+    if (state.addingCircle) {
+        state.addingCircle = false;
         document.body.classList.remove('adding-zone-cursor');
-        document.getElementById('btn-add-zone').style.background = '';
+        document.getElementById('btn-add-circle').style.background = '';
     }
-    if (e.key === 'Delete' && state.activeZoneIdx >= 0 && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
-        deleteZone(state.activeZoneIdx);
+    if (state.addingPolygon) {
+        cancelPolygonDraft();
+    } else {
+        state.addingPolygon = { points: [], poly: null, markers: [] };
+        document.body.classList.add('adding-zone-cursor');
+        document.getElementById('btn-add-polygon').style.background = 'var(--accent)';
+        toast('Кликни по карте для точек полигона. Двойной клик — готово, ESC — отмена');
+    }
+});
+
+function cancelPolygonDraft() {
+    if (!state.addingPolygon) return;
+    if (state.addingPolygon.poly) map.removeLayer(state.addingPolygon.poly);
+    state.addingPolygon.markers.forEach(m => map.removeLayer(m));
+    state.addingPolygon = null;
+    document.body.classList.remove('adding-zone-cursor');
+    document.getElementById('btn-add-polygon').style.background = '';
+}
+
+function commitPolygonDraft() {
+    if (!state.addingPolygon) return;
+    const pts = state.addingPolygon.points;
+    if (pts.length < 3) { toast('Минимум 3 точки', 'err'); return; }
+    const n = state.config.Zones.Polygons.length + 1;
+    state.config.Zones.Polygons.push({
+        Name: `Полигон ${n}`,
+        Points: pts.map(([x, z]) => [round2(x), 0, round2(z)]),
+    });
+    const idx = state.config.Zones.Polygons.length - 1;
+    cancelPolygonDraft();
+    buildPolygonLayer(idx);
+    selectZone('polygon', idx);
+    renderZoneList();
+}
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        if (state.addingCircle) {
+            state.addingCircle = false;
+            document.body.classList.remove('adding-zone-cursor');
+            document.getElementById('btn-add-circle').style.background = '';
+        }
+        if (state.addingPolygon) cancelPolygonDraft();
+    }
+    if (e.key === 'Enter' && state.addingPolygon) {
+        e.preventDefault();
+        commitPolygonDraft();
+    }
+    const typing = document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA';
+    if (e.key === 'Delete' && state.active && !typing) {
+        deleteActiveZone();
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
@@ -264,29 +448,58 @@ document.addEventListener('keydown', (e) => {
 });
 
 map.on('click', (e) => {
-    if (!state.adding || !state.config) return;
+    if (!state.config) return;
     const [x, z] = fromLatLng(e.latlng);
     if (x < 0 || x > WORLD_SIZE || z < 0 || z > WORLD_SIZE) return;
-    state.config.Zones.Circles.push({
-        Name: `Зона ${state.config.Zones.Circles.length + 1}`,
-        Center: [round2(x), 0, round2(z)],
-        Radius: 50,
-    });
-    const idx = state.config.Zones.Circles.length - 1;
-    buildZoneLayer(idx);
-    selectZone(idx);
-    state.adding = false;
-    document.body.classList.remove('adding-zone-cursor');
-    document.getElementById('btn-add-zone').style.background = '';
+
+    if (state.addingCircle) {
+        state.config.Zones.Circles.push({
+            Name: `Зона ${state.config.Zones.Circles.length + 1}`,
+            Center: [round2(x), 0, round2(z)], Radius: 50,
+        });
+        const idx = state.config.Zones.Circles.length - 1;
+        buildCircleLayer(idx);
+        selectZone('circle', idx);
+        state.addingCircle = false;
+        document.body.classList.remove('adding-zone-cursor');
+        document.getElementById('btn-add-circle').style.background = '';
+        return;
+    }
+
+    if (state.addingPolygon) {
+        state.addingPolygon.points.push([x, z]);
+        const m = L.marker(e.latlng, {
+            icon: L.divIcon({ className: 'draft-vertex', iconSize: [6, 6] }),
+            interactive: false, keyboard: false,
+        }).addTo(map);
+        state.addingPolygon.markers.push(m);
+        const latlngs = state.addingPolygon.points.map(([px, pz]) => toLatLng(px, pz));
+        if (state.addingPolygon.poly) {
+            state.addingPolygon.poly.setLatLngs(latlngs);
+        } else if (latlngs.length >= 2) {
+            state.addingPolygon.poly = L.polyline(latlngs, {
+                color: '#6cb1ff', weight: 2, dashArray: '4 4', className: 'polygon-draft',
+            }).addTo(map);
+        }
+    }
 });
 
-function deleteZone(idx) {
-    if (!state.config || idx < 0) return;
-    state.config.Zones.Circles.splice(idx, 1);
-    state.activeZoneIdx = -1;
+map.on('dblclick', (e) => {
+    if (state.addingPolygon) {
+        L.DomEvent.preventDefault(e.originalEvent);
+        commitPolygonDraft();
+    }
+});
+
+function deleteActiveZone() {
+    if (!state.config || !state.active) return;
+    const { kind, idx } = state.active;
+    if (kind === 'circle') state.config.Zones.Circles.splice(idx, 1);
+    else state.config.Zones.Polygons.splice(idx, 1);
+    state.active = null;
     rebuildAllZoneLayers();
     renderZoneList();
-    toast('Зона удалена');
+    toast('Удалено');
 }
 
 // ─── Panel rendering ─────────────────────────────────────────────────────────
@@ -301,7 +514,10 @@ const el = {
     wlInput: document.getElementById('wl-input'),
     wlAdd: document.getElementById('wl-add'),
     wlCount: document.getElementById('wl-count'),
-    zoneList: document.getElementById('zone-list'),
+    circleList: document.getElementById('circle-list'),
+    polygonList: document.getElementById('polygon-list'),
+    circleCount: document.getElementById('circle-count'),
+    polygonCount: document.getElementById('polygon-count'),
     zoneCount: document.getElementById('zone-count'),
     fileName: document.getElementById('file-name'),
 };
@@ -310,7 +526,8 @@ function enablePanel(on) {
     [el.msgBlocked, el.adminBypass, el.blkInput, el.blkAdd, el.wlInput, el.wlAdd].forEach(x => x.disabled = !on);
     document.getElementById('btn-save').disabled = !on || !state.fileHandle;
     document.getElementById('btn-download').disabled = !on;
-    document.getElementById('btn-add-zone').disabled = !on;
+    document.getElementById('btn-add-circle').disabled = !on;
+    document.getElementById('btn-add-polygon').disabled = !on;
 }
 
 function renderAll() {
@@ -339,13 +556,24 @@ function renderChips(container, arr, onRemove) {
 }
 
 function renderZoneList() {
-    el.zoneList.innerHTML = '';
-    if (!state.config) { el.zoneCount.textContent = ''; return; }
-    const zones = state.config.Zones.Circles;
-    el.zoneCount.textContent = zones.length;
-    zones.forEach((zone, i) => {
+    el.circleList.innerHTML = '';
+    el.polygonList.innerHTML = '';
+    if (!state.config) {
+        el.zoneCount.textContent = '';
+        el.circleCount.textContent = '';
+        el.polygonCount.textContent = '';
+        return;
+    }
+    const circles = state.config.Zones.Circles;
+    const polygons = state.config.Zones.Polygons;
+    el.zoneCount.textContent = circles.length + polygons.length;
+    el.circleCount.textContent = circles.length;
+    el.polygonCount.textContent = polygons.length;
+
+    circles.forEach((zone, i) => {
         const li = document.createElement('li');
-        li.className = 'zone-item' + (i === state.activeZoneIdx ? ' active' : '');
+        const active = isActive('circle', i);
+        li.className = 'zone-item' + (active ? ' active' : '');
         const [x, , z] = zone.Center;
         li.innerHTML = `
             <span class="zname"></span>
@@ -354,14 +582,38 @@ function renderZoneList() {
         li.firstElementChild.textContent = zone.Name || '(без имени)';
         li.addEventListener('click', (e) => {
             if (e.target.closest('.zone-card')) return;
-            selectZone(i);
+            selectZone('circle', i);
         });
-        if (i === state.activeZoneIdx) li.appendChild(buildZoneCard(i));
-        el.zoneList.appendChild(li);
+        if (active) li.appendChild(buildCircleCard(i));
+        el.circleList.appendChild(li);
+    });
+
+    polygons.forEach((poly, i) => {
+        const li = document.createElement('li');
+        const active = isActive('polygon', i);
+        li.className = 'zone-item' + (active ? ' active' : '');
+        const c = poly.Points.length ? polygonCentroid(poly.Points) : [0, 0];
+        li.innerHTML = `
+            <span class="zname"></span>
+            <span class="zmeta">${c[0].toFixed(0)},${c[1].toFixed(0)} v=${poly.Points.length}</span>
+        `;
+        li.firstElementChild.textContent = poly.Name || '(без имени)';
+        li.addEventListener('click', (e) => {
+            if (e.target.closest('.zone-card')) return;
+            selectZone('polygon', i);
+        });
+        if (active) li.appendChild(buildPolygonCard(i));
+        el.polygonList.appendChild(li);
     });
 }
 
-function buildZoneCard(idx) {
+function polygonCentroid(points) {
+    let sx = 0, sz = 0;
+    for (const p of points) { sx += p[0]; sz += p[2]; }
+    return [sx / points.length, sz / points.length];
+}
+
+function buildCircleCard(idx) {
     const zone = state.config.Zones.Circles[idx];
     const div = document.createElement('div');
     div.className = 'zone-card';
@@ -383,46 +635,87 @@ function buildZoneCard(idx) {
 
     div.querySelector('[data-field="Name"]').addEventListener('input', (e) => {
         zone.Name = e.target.value;
-        refreshZoneLayer(idx);
-        const li = el.zoneList.querySelectorAll('.zone-item')[idx];
+        refreshCircleLayer(idx);
+        const li = el.circleList.querySelectorAll('.zone-item')[idx];
         if (li) li.querySelector('.zname').textContent = zone.Name || '(без имени)';
     });
     div.querySelector('[data-field="X"]').addEventListener('input', (e) => {
         zone.Center = [parseFloat(e.target.value) || 0, 0, zone.Center[2]];
-        refreshZoneLayer(idx);
-        updateZoneListRowMeta(idx);
+        refreshCircleLayer(idx);
+        updateCircleRowMeta(idx);
     });
     div.querySelector('[data-field="Z"]').addEventListener('input', (e) => {
         zone.Center = [zone.Center[0], 0, parseFloat(e.target.value) || 0];
-        refreshZoneLayer(idx);
-        updateZoneListRowMeta(idx);
+        refreshCircleLayer(idx);
+        updateCircleRowMeta(idx);
     });
     div.querySelector('[data-field="R"]').addEventListener('input', (e) => {
         zone.Radius = Math.max(1, parseInt(e.target.value, 10) || 1);
-        refreshZoneLayer(idx);
-        updateZoneListRowMeta(idx);
+        refreshCircleLayer(idx);
+        updateCircleRowMeta(idx);
     });
-    div.querySelector('[data-action="del"]').addEventListener('click', () => deleteZone(idx));
+    div.querySelector('[data-action="del"]').addEventListener('click', () => deleteActiveZone());
+    return div;
+}
+
+function buildPolygonCard(idx) {
+    const poly = state.config.Zones.Polygons[idx];
+    const div = document.createElement('div');
+    div.className = 'zone-card';
+    div.innerHTML = `
+        <label>Name</label><input type="text" data-field="Name">
+        <label>Вершин</label><span data-field="V"></span>
+        <div class="zone-card-actions">
+            <button class="danger" data-action="del">🗑 Удалить</button>
+        </div>
+    `;
+    div.querySelector('[data-field="Name"]').value = poly.Name || '';
+    div.querySelector('[data-field="V"]').textContent = poly.Points.length;
+
+    div.addEventListener('click', (e) => e.stopPropagation());
+
+    div.querySelector('[data-field="Name"]').addEventListener('input', (e) => {
+        poly.Name = e.target.value;
+        refreshPolygonLayer(idx);
+        const li = el.polygonList.querySelectorAll('.zone-item')[idx];
+        if (li) li.querySelector('.zname').textContent = poly.Name || '(без имени)';
+    });
+    div.querySelector('[data-action="del"]').addEventListener('click', () => deleteActiveZone());
     return div;
 }
 
 function updateZoneCardInputs() {
-    const idx = state.activeZoneIdx;
-    if (idx < 0) return;
-    const zone = state.config.Zones.Circles[idx];
-    const card = el.zoneList.querySelector('.zone-card');
-    if (!card) return;
-    card.querySelector('[data-field="X"]').value = zone.Center[0];
-    card.querySelector('[data-field="Z"]').value = zone.Center[2];
-    card.querySelector('[data-field="R"]').value = zone.Radius;
-    updateZoneListRowMeta(idx);
+    if (!state.active) return;
+    const { kind, idx } = state.active;
+    if (kind === 'circle') {
+        const zone = state.config.Zones.Circles[idx];
+        const card = el.circleList.querySelector('.zone-card');
+        if (!card) return;
+        card.querySelector('[data-field="X"]').value = zone.Center[0];
+        card.querySelector('[data-field="Z"]').value = zone.Center[2];
+        card.querySelector('[data-field="R"]').value = zone.Radius;
+        updateCircleRowMeta(idx);
+    } else {
+        const poly = state.config.Zones.Polygons[idx];
+        const card = el.polygonList.querySelector('.zone-card');
+        if (card) card.querySelector('[data-field="V"]').textContent = poly.Points.length;
+        updatePolygonRowMeta(idx);
+    }
 }
 
-function updateZoneListRowMeta(idx) {
-    const li = el.zoneList.querySelectorAll('.zone-item')[idx];
+function updateCircleRowMeta(idx) {
+    const li = el.circleList.querySelectorAll('.zone-item')[idx];
     if (!li) return;
     const zone = state.config.Zones.Circles[idx];
     li.querySelector('.zmeta').textContent = `${zone.Center[0].toFixed(0)},${zone.Center[2].toFixed(0)} r=${zone.Radius}`;
+}
+
+function updatePolygonRowMeta(idx) {
+    const li = el.polygonList.querySelectorAll('.zone-item')[idx];
+    if (!li) return;
+    const poly = state.config.Zones.Polygons[idx];
+    const c = poly.Points.length ? polygonCentroid(poly.Points) : [0, 0];
+    li.querySelector('.zmeta').textContent = `${c[0].toFixed(0)},${c[1].toFixed(0)} v=${poly.Points.length}`;
 }
 
 // ─── Panel events ─────────────────────────────────────────────────────────────
@@ -489,6 +782,26 @@ function formatZone(z, depth) {
     ];
     return `${pad}{\n${parts.join(',\n')}\n${pad}}`;
 }
+function formatPoint(arr) {
+    const x = formatInt(arr?.[0] ?? 0);
+    const y = formatInt(arr?.[1] ?? 0);
+    const z = formatInt(arr?.[2] ?? 0);
+    return `[${x}, ${y}, ${z}]`;
+}
+function formatPoints(arr, depth) {
+    if (!arr?.length) return '[]';
+    const pad = ind(depth), pad1 = ind(depth + 1);
+    const inner = arr.map(p => pad1 + formatPoint(p)).join(',\n');
+    return `[\n${inner}\n${pad}]`;
+}
+function formatPolygon(p, depth) {
+    const pad = ind(depth), pad1 = ind(depth + 1);
+    const parts = [
+        `${pad1}"Name": ${JSON.stringify(p.Name ?? '')}`,
+        `${pad1}"Points": ${formatPoints(p.Points || [], depth + 1)}`,
+    ];
+    return `${pad}{\n${parts.join(',\n')}\n${pad}}`;
+}
 function formatDebugCfg(cfg, depth) {
     if (!cfg || typeof cfg !== 'object') return '{}';
     const pad = ind(depth), pad1 = ind(depth + 1);
@@ -504,11 +817,15 @@ function formatDebugCfg(cfg, depth) {
     return `{\n${parts.join(',\n')}\n${pad}}`;
 }
 function serializeConfig(cfg) {
-    const zonesArr = cfg.Zones?.Circles || [];
-    const circlesStr = zonesArr.length
-        ? `[\n${zonesArr.map(z => formatZone(z, 3)).join(',\n')}\n${ind(2)}]`
+    const circlesArr = cfg.Zones?.Circles || [];
+    const circlesStr = circlesArr.length
+        ? `[\n${circlesArr.map(z => formatZone(z, 3)).join(',\n')}\n${ind(2)}]`
         : '[]';
-    const zonesBlock = `{\n${ind(2)}"Circles": ${circlesStr}\n${ind(1)}}`;
+    const polygonsArr = cfg.Zones?.Polygons || [];
+    const polygonsStr = polygonsArr.length
+        ? `[\n${polygonsArr.map(p => formatPolygon(p, 3)).join(',\n')}\n${ind(2)}]`
+        : '[]';
+    const zonesBlock = `{\n${ind(2)}"Circles": ${circlesStr},\n${ind(2)}"Polygons": ${polygonsStr}\n${ind(1)}}`;
 
     const parts = [
         `${ind(1)}"Version": ${JSON.stringify(cfg.Version ?? '1.0')}`,
@@ -550,12 +867,14 @@ async function openFile() {
         const parsed = JSON.parse(text);
         normalizeConfig(parsed);
         state.config = parsed;
-        state.activeZoneIdx = -1;
+        state.active = null;
         enablePanel(true);
         document.getElementById('btn-save').disabled = !state.fileHandle;
         renderAll();
         rebuildAllZoneLayers();
-        toast(`Загружено: ${parsed.Zones?.Circles?.length || 0} зон`, 'ok');
+        const nC = parsed.Zones?.Circles?.length || 0;
+        const nP = parsed.Zones?.Polygons?.length || 0;
+        toast(`Загружено: ${nC} кругов, ${nP} полигонов`, 'ok');
     } catch (err) {
         if (err.name === 'AbortError') return;
         console.error(err);
@@ -572,6 +891,7 @@ function normalizeConfig(cfg) {
     cfg.DebugCfg ??= { Enabled: 0, DrawDistance: 500, PersistSeconds: 10 };
     cfg.Zones ??= {};
     cfg.Zones.Circles ??= [];
+    cfg.Zones.Polygons ??= [];
 }
 
 async function saveFile() {

@@ -16,8 +16,9 @@
         <button id="btn-save" disabled>💾 Сохранить (Ctrl+S)</button>
         <button id="btn-download" disabled>⬇ Скачать</button>
         <span class="sep"></span>
-        <button id="btn-layer">🛰 Спутник</button>
-        <button id="btn-add-zone" disabled>＋ Добавить зону</button>
+        <button id="btn-layer">🗺 Топо</button>
+        <button id="btn-add-circle" disabled>＋ Круг</button>
+        <button id="btn-add-polygon" disabled>＋ Полигон</button>
         <span id="file-name" class="filename">— файл не открыт —</span>
     </div>
     <div class="coord-hud" id="coord-hud"></div>
@@ -56,7 +57,14 @@
 
         <section class="card">
             <h3>Зоны <span id="zone-count" class="count"></span></h3>
-            <ul id="zone-list" class="zone-list"></ul>
+            <div class="zone-group">
+                <h4>Круги <span id="circle-count" class="count"></span></h4>
+                <ul id="circle-list" class="zone-list"></ul>
+            </div>
+            <div class="zone-group">
+                <h4>Полигоны <span id="polygon-count" class="count"></span></h4>
+                <ul id="polygon-list" class="zone-list"></ul>
+            </div>
         </section>
     </aside>
 

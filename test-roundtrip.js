@@ -33,6 +33,26 @@ function formatZone(z, depth) {
     ];
     return `${pad}{\n${parts.join(',\n')}\n${pad}}`;
 }
+function formatPoint(arr) {
+    const x = formatInt(arr?.[0] ?? 0);
+    const y = formatInt(arr?.[1] ?? 0);
+    const z = formatInt(arr?.[2] ?? 0);
+    return `[${x}, ${y}, ${z}]`;
+}
+function formatPoints(arr, depth) {
+    if (!arr?.length) return '[]';
+    const pad = ind(depth), pad1 = ind(depth + 1);
+    const inner = arr.map(p => pad1 + formatPoint(p)).join(',\n');
+    return `[\n${inner}\n${pad}]`;
+}
+function formatPolygon(p, depth) {
+    const pad = ind(depth), pad1 = ind(depth + 1);
+    const parts = [
+        `${pad1}"Name": ${JSON.stringify(p.Name ?? '')}`,
+        `${pad1}"Points": ${formatPoints(p.Points || [], depth + 1)}`,
+    ];
+    return `${pad}{\n${parts.join(',\n')}\n${pad}}`;
+}
 function formatDebugCfg(cfg, depth) {
     if (!cfg || typeof cfg !== 'object') return '{}';
     const pad = ind(depth), pad1 = ind(depth + 1);
@@ -47,11 +67,15 @@ function formatDebugCfg(cfg, depth) {
     return `{\n${parts.join(',\n')}\n${pad}}`;
 }
 function serializeConfig(cfg) {
-    const zonesArr = cfg.Zones?.Circles || [];
-    const circlesStr = zonesArr.length
-        ? `[\n${zonesArr.map(z => formatZone(z, 3)).join(',\n')}\n${ind(2)}]`
+    const circlesArr = cfg.Zones?.Circles || [];
+    const circlesStr = circlesArr.length
+        ? `[\n${circlesArr.map(z => formatZone(z, 3)).join(',\n')}\n${ind(2)}]`
         : '[]';
-    const zonesBlock = `{\n${ind(2)}"Circles": ${circlesStr}\n${ind(1)}}`;
+    const polygonsArr = cfg.Zones?.Polygons || [];
+    const polygonsStr = polygonsArr.length
+        ? `[\n${polygonsArr.map(p => formatPolygon(p, 3)).join(',\n')}\n${ind(2)}]`
+        : '[]';
+    const zonesBlock = `{\n${ind(2)}"Circles": ${circlesStr},\n${ind(2)}"Polygons": ${polygonsStr}\n${ind(1)}}`;
     const parts = [
         `${ind(1)}"Version": ${JSON.stringify(cfg.Version ?? '1.0')}`,
         `${ind(1)}"MessageOnBlockedDeploy": ${JSON.stringify(cfg.MessageOnBlockedDeploy ?? '')}`,
