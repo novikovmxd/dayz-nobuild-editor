@@ -60,7 +60,7 @@ const worldCRS = L.extend({}, L.CRS.Simple, {
         return Math.sqrt(dx * dx + dy * dy);
     },
     transformation: new L.Transformation(1, 0, -1, WORLD_SIZE),
-    infinite: false,
+    infinite: true,
 });
 
 // world [x, z] (meters, Z=north, grows upward) → Leaflet latLng
