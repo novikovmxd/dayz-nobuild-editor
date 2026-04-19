@@ -3,7 +3,7 @@
 const WORLD_SIZE = 15360;
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 7;
-const TILE_BASE = 'https://static.xam.nu/dayz/maps/chernarusplus/1.29';
+const TILE_BASE = 'https://static.xam.nu/dayz/maps/chernarusplus/1.27';
 
 const state = {
     fileHandle: null,
@@ -89,7 +89,7 @@ const tileOpts = {
     noWrap: true,
     bounds: [[0, 0], [WORLD_SIZE, WORLD_SIZE]],
 };
-const tileUrl = (type) => `${TILE_BASE}/${type}/{z}/{x}/{y}.jpg`;
+const tileUrl = (type) => `${TILE_BASE}/${type}/{z}/{x}/{y}.webp`;
 let tileLayer = L.tileLayer(tileUrl(state.mapLayer), tileOpts).addTo(map);
 
 // HUD: world coords under cursor
