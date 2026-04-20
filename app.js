@@ -178,11 +178,30 @@ const POI_CATEGORIES = {
         sizeFor: (entry) => entry.w === 'high' ? 16 : entry.w === 'medium' ? 14 : 12,
     },
 };
-const poiLayers = {};         // id → L.layerGroup
+// Per-tier zoom gate: low-tier/dense markers (well pumps, mil-low) only show when zoomed in,
+// so obzorный zoom (1-2) не тащит сотни DOM-иконок.
+const POI_TIER_MIN_ZOOM = { high: 2, medium: 3, low: 4, waterpump: 4, watertower: 2, default: 2 };
+const poiLayers = {};         // id → L.layerGroup (container added to map)
+const poiMarkers = {};        // id → [{ marker, minZoom }]
 const poiVisible = {};        // id → bool
 for (const id of Object.keys(POI_CATEGORIES)) {
     poiLayers[id] = L.layerGroup().addTo(map);
+    poiMarkers[id] = [];
     poiVisible[id] = true;
+}
+
+function applyPoiZoomFilter() {
+    const z = map.getZoom();
+    for (const id of Object.keys(poiMarkers)) {
+        if (!poiVisible[id]) continue;
+        const layer = poiLayers[id];
+        for (const item of poiMarkers[id]) {
+            const shouldShow = z >= item.minZoom;
+            const present = layer.hasLayer(item.marker);
+            if (shouldShow && !present) layer.addLayer(item.marker);
+            else if (!shouldShow && present) layer.removeLayer(item.marker);
+        }
+    }
 }
 
 async function loadMapData() {
@@ -227,7 +246,7 @@ async function loadMapData() {
             });
             return iconCache[cacheKey];
         };
-        const placeMarker = (id, label, entry, iconName, size) => {
+        const placeMarker = (id, label, entry, iconName, size, minZoom) => {
             const leafletIcon = getLeafletIcon(id, iconName, size);
             if (!leafletIcon) return;
             for (const pt of entry.p) {
@@ -242,31 +261,33 @@ async function loadMapData() {
                     zIndexOffset: -500,
                 });
                 marker.bindTooltip(label, { direction: 'top', offset: [0, -8], className: 'poi-tooltip' });
-                poiLayers[id].addLayer(marker);
+                poiMarkers[id].push({ marker, minZoom });
             }
         };
+        const tierZoom = (entry) => POI_TIER_MIN_ZOOM[entry.w] ?? POI_TIER_MIN_ZOOM.default;
         for (const [id, cfg] of Object.entries(POI_CATEGORIES)) {
             if (cfg.buildings) {
                 for (const b of cfg.buildings) {
                     const entry = icons[b.key];
                     if (!entry?.p) continue;
-                    placeMarker(id, cfg.label, entry, b.icon, b.size || 16);
+                    placeMarker(id, cfg.label, entry, b.icon, b.size || 16, tierZoom(entry));
                 }
             } else if (cfg.filter) {
                 for (const entry of Object.values(icons)) {
                     if (!entry?.p || !cfg.filter(entry)) continue;
                     const iconName = cfg.iconFor(entry);
                     const size = cfg.sizeFor ? cfg.sizeFor(entry) : 16;
-                    placeMarker(id, cfg.label, entry, iconName, size);
+                    placeMarker(id, cfg.label, entry, iconName, size, tierZoom(entry));
                 }
             }
         }
+        applyPoiZoomFilter();
     } catch (err) {
         console.warn('Не удалось загрузить данные карты:', err);
     }
 }
 loadMapData();
-map.on('zoomend', applyLabelZoomFilter);
+map.on('zoomend', () => { applyLabelZoomFilter(); applyPoiZoomFilter(); });
 
 // HUD: world coords under cursor
 const hud = document.getElementById('coord-hud');
@@ -900,8 +921,12 @@ document.querySelectorAll('.poi-toggle').forEach(btn => {
     btn.classList.add('active');
     btn.addEventListener('click', () => {
         poiVisible[id] = !poiVisible[id];
-        if (poiVisible[id]) map.addLayer(poiLayers[id]);
-        else map.removeLayer(poiLayers[id]);
+        if (poiVisible[id]) {
+            if (!map.hasLayer(poiLayers[id])) map.addLayer(poiLayers[id]);
+            applyPoiZoomFilter();
+        } else {
+            poiLayers[id].clearLayers();
+        }
         btn.classList.toggle('active', poiVisible[id]);
     });
 });

@@ -160,9 +160,8 @@ textarea { resize: vertical; min-height: 36px; font-family: inherit; }
     color: #bdbdbd; font-style: italic;
 }
 
-/* POI icons — native xam.nu sprites; add subtle drop shadow for legibility on satellite */
+/* POI icons — native xam.nu sprites. drop-shadow() убран: per-DOM GPU cost душил пан/зум при сотнях маркеров */
 .poi-sprite {
-    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8));
     image-rendering: -webkit-optimize-contrast;
 }
 
