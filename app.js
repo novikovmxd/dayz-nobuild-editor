@@ -124,12 +124,48 @@ function setLabelsVisible(v) {
     }
 }
 
-// POI categories — displayed as circular icon markers
+// POI categories — displayed using xam.nu's own icon sprites (loaded from dayz.xam.nu).
+// Icon hashes resolved from xam.nu JS bundle: module "./<faction>-<weight>.webp" → images/<hash>.webp
+const XAM_ICON_BASE = 'https://dayz.xam.nu/images/';
+const ICON_HASH = {
+    'police-high':         '421bcf90.webp',
+    'firefighter-high':    'e56f1634.webp',
+    'medic-high':          'd1485496.webp',
+    'medic-medium':        'd29f5a23.webp',
+    'food-waterpump':      '5175d19c.webp',
+    'landmark-watertower': '0fbc87b4.webp',
+};
 const POI_CATEGORIES = {
-    police:  { keys: ['land_city_policestation', 'land_village_policestation'],                         label: 'Полиция'   },
-    fire:    { keys: ['land_city_firestation', 'land_mil_firestation'],                                 label: 'Пожарка'   },
-    medical: { keys: ['land_city_hospital', 'land_village_healthcare', 'land_medical_tent_big'],        label: 'Медицина'  },
-    water:   { keys: ['land_misc_well_pump_blue', 'land_misc_well_pump_yellow', 'land_water_station'],  label: 'Вода'      },
+    police: {
+        label: 'Полиция',
+        buildings: [
+            { key: 'land_city_policestation',    icon: 'police-high',      size: 16 },
+            { key: 'land_village_policestation', icon: 'police-high',      size: 16 },
+        ],
+    },
+    fire: {
+        label: 'Пожарка',
+        buildings: [
+            { key: 'land_city_firestation', icon: 'firefighter-high', size: 16 },
+            { key: 'land_mil_firestation',  icon: 'firefighter-high', size: 16 },
+        ],
+    },
+    medical: {
+        label: 'Медицина',
+        buildings: [
+            { key: 'land_city_hospital',      icon: 'medic-high',   size: 16 },
+            { key: 'land_village_healthcare', icon: 'medic-high',   size: 16 },
+            { key: 'land_medical_tent_big',   icon: 'medic-medium', size: 14 },
+        ],
+    },
+    water: {
+        label: 'Вода',
+        buildings: [
+            { key: 'land_misc_well_pump_blue',   icon: 'food-waterpump',      size: 14 },
+            { key: 'land_misc_well_pump_yellow', icon: 'food-waterpump',      size: 14 },
+            { key: 'land_water_station',         icon: 'landmark-watertower', size: 16 },
+        ],
+    },
 };
 const poiLayers = {};         // id → L.layerGroup
 const poiVisible = {};        // id → bool
@@ -164,12 +200,22 @@ async function loadMapData() {
         }
         applyLabelZoomFilter();
 
-        // POI icons
+        // POI icons — use xam.nu's own sprite images for visual parity
         const icons = d.markers?.icons ?? {};
         for (const [id, cfg] of Object.entries(POI_CATEGORIES)) {
-            for (const key of cfg.keys) {
-                const entry = icons[key];
+            for (const b of cfg.buildings) {
+                const entry = icons[b.key];
                 if (!entry?.p) continue;
+                const hash = ICON_HASH[b.icon];
+                if (!hash) continue;
+                const iconUrl = XAM_ICON_BASE + hash;
+                const iconSize = b.size || 16;
+                const leafletIcon = L.icon({
+                    iconUrl,
+                    iconSize: [iconSize, iconSize],
+                    iconAnchor: [iconSize / 2, iconSize / 2],
+                    className: `poi-sprite poi-${id}`,
+                });
                 for (const pt of entry.p) {
                     const lat = pt?.[0]?.[0];
                     const lng = pt?.[0]?.[1];
@@ -177,12 +223,7 @@ async function loadMapData() {
                     const wx = lng * 60;
                     const wz = (lat + 256) * 60;
                     const marker = L.marker(toLatLng(wx, wz), {
-                        icon: L.divIcon({
-                            className: `poi-icon poi-${id}`,
-                            html: '',
-                            iconSize: [18, 18],
-                            iconAnchor: [9, 9],
-                        }),
+                        icon: leafletIcon,
                         keyboard: false,
                         zIndexOffset: -500,
                     });

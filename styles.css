@@ -160,19 +160,11 @@ textarea { resize: vertical; min-height: 36px; font-family: inherit; }
     color: #bdbdbd; font-style: italic;
 }
 
-/* POI icon markers (police, fire, medical, water) */
-.poi-icon {
-    background: rgba(20, 22, 25, 0.85);
-    border: 2px solid #fff;
-    border-radius: 50%;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
-    width: 18px !important;
-    height: 18px !important;
+/* POI icons — native xam.nu sprites; add subtle drop shadow for legibility on satellite */
+.poi-sprite {
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8));
+    image-rendering: -webkit-optimize-contrast;
 }
-.poi-police  { border-color: #3b82f6; background: radial-gradient(rgba(59,130,246,0.9), rgba(30,64,175,0.95)); }
-.poi-fire    { border-color: #ef4444; background: radial-gradient(rgba(239,68,68,0.9), rgba(153,27,27,0.95)); }
-.poi-medical { border-color: #22c55e; background: radial-gradient(rgba(34,197,94,0.9), rgba(21,128,61,0.95)); }
-.poi-water   { border-color: #06b6d4; background: radial-gradient(rgba(6,182,212,0.9), rgba(14,116,144,0.95)); }
 
 .poi-tooltip {
     background: rgba(20, 22, 25, 0.9); color: var(--fg);
