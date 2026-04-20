@@ -12,6 +12,7 @@ const state = {
     mapLayer: 'satellite',
     addingCircle: false,
     addingPolygon: null,     // { points: [[x,z], ...], poly, markers: [] } | null
+    labelsVisible: true,
 };
 
 // ─── IndexedDB for file handle persistence ───────────────────────────────────
@@ -98,20 +99,59 @@ let tileLayer = L.tileLayer(tileUrl(state.mapLayer), tileOpts).addTo(map);
 // Leaflet frame: p[0]=lat, p[1]=lng, with lat = 256*z/size - 256, lng = 256*x/size.
 // Inverse: world_x = p[1]*size/256, world_z = (p[0]+256)*size/256.  size=15360
 // → multiplier is exactly 60.
-const LABEL_TIERS = new Set(['capital', 'city', 'village', 'local']);
+const LABEL_MIN_ZOOM = { capital: 1, city: 2, village: 3, local: 5 };
 const labelsLayer = L.layerGroup().addTo(map);
-async function loadLocationLabels() {
+const locationMarkers = []; // [{ marker, tier }]
+
+function applyLabelZoomFilter() {
+    if (!state.labelsVisible) return;
+    const z = map.getZoom();
+    for (const { marker, tier } of locationMarkers) {
+        const shouldShow = z >= (LABEL_MIN_ZOOM[tier] ?? 99);
+        const present = labelsLayer.hasLayer(marker);
+        if (shouldShow && !present) labelsLayer.addLayer(marker);
+        else if (!shouldShow && present) labelsLayer.removeLayer(marker);
+    }
+}
+
+function setLabelsVisible(v) {
+    state.labelsVisible = v;
+    if (v) {
+        if (!map.hasLayer(labelsLayer)) map.addLayer(labelsLayer);
+        applyLabelZoomFilter();
+    } else {
+        if (map.hasLayer(labelsLayer)) map.removeLayer(labelsLayer);
+    }
+}
+
+// POI categories — displayed as circular icon markers
+const POI_CATEGORIES = {
+    police:  { keys: ['land_city_policestation', 'land_village_policestation'],                         label: 'Полиция'   },
+    fire:    { keys: ['land_city_firestation', 'land_mil_firestation'],                                 label: 'Пожарка'   },
+    medical: { keys: ['land_city_hospital', 'land_village_healthcare', 'land_medical_tent_big'],        label: 'Медицина'  },
+    water:   { keys: ['land_misc_well_pump_blue', 'land_misc_well_pump_yellow', 'land_water_station'],  label: 'Вода'      },
+};
+const poiLayers = {};         // id → L.layerGroup
+const poiVisible = {};        // id → bool
+for (const id of Object.keys(POI_CATEGORIES)) {
+    poiLayers[id] = L.layerGroup().addTo(map);
+    poiVisible[id] = true;
+}
+
+async function loadMapData() {
     try {
         const r = await fetch('https://static.xam.nu/dayz/json/chernarusplus/1.29.json');
         if (!r.ok) return;
         const d = await r.json();
+
+        // City / village labels
         for (const loc of d.markers?.locations ?? []) {
-            if (!LABEL_TIERS.has(loc.w) || loc.a === 0) continue;
+            if (!(loc.w in LABEL_MIN_ZOOM) || loc.a === 0) continue;
             const wx = loc.p[1] * 60;
             const wz = (loc.p[0] + 256) * 60;
             const name = loc.s?.[1] || loc.s?.[0] || '';
             if (!name) continue;
-            L.marker(toLatLng(wx, wz), {
+            const marker = L.marker(toLatLng(wx, wz), {
                 interactive: false, keyboard: false,
                 icon: L.divIcon({
                     className: `loc-label loc-${loc.w}`,
@@ -119,13 +159,44 @@ async function loadLocationLabels() {
                     iconSize: null,
                 }),
                 zIndexOffset: -1000,
-            }).addTo(labelsLayer);
+            });
+            locationMarkers.push({ marker, tier: loc.w });
+        }
+        applyLabelZoomFilter();
+
+        // POI icons
+        const icons = d.markers?.icons ?? {};
+        for (const [id, cfg] of Object.entries(POI_CATEGORIES)) {
+            for (const key of cfg.keys) {
+                const entry = icons[key];
+                if (!entry?.p) continue;
+                for (const pt of entry.p) {
+                    const lat = pt?.[0]?.[0];
+                    const lng = pt?.[0]?.[1];
+                    if (typeof lat !== 'number' || typeof lng !== 'number') continue;
+                    const wx = lng * 60;
+                    const wz = (lat + 256) * 60;
+                    const marker = L.marker(toLatLng(wx, wz), {
+                        icon: L.divIcon({
+                            className: `poi-icon poi-${id}`,
+                            html: '',
+                            iconSize: [18, 18],
+                            iconAnchor: [9, 9],
+                        }),
+                        keyboard: false,
+                        zIndexOffset: -500,
+                    });
+                    marker.bindTooltip(cfg.label, { direction: 'top', offset: [0, -8], className: 'poi-tooltip' });
+                    poiLayers[id].addLayer(marker);
+                }
+            }
         }
     } catch (err) {
-        console.warn('Не удалось загрузить подписи локаций:', err);
+        console.warn('Не удалось загрузить данные карты:', err);
     }
 }
-loadLocationLabels();
+loadMapData();
+map.on('zoomend', applyLabelZoomFilter);
 
 // HUD: world coords under cursor
 const hud = document.getElementById('coord-hud');
@@ -747,6 +818,22 @@ document.getElementById('btn-layer').addEventListener('click', () => {
     tileLayer = L.tileLayer(tileUrl(state.mapLayer), tileOpts).addTo(map);
     tileLayer.bringToBack();
     document.getElementById('btn-layer').textContent = state.mapLayer === 'topographic' ? '🛰 Спутник' : '🗺 Топо';
+});
+
+document.getElementById('btn-labels').addEventListener('click', () => {
+    setLabelsVisible(!state.labelsVisible);
+    document.getElementById('btn-labels').classList.toggle('off', !state.labelsVisible);
+});
+
+document.querySelectorAll('.poi-toggle').forEach(btn => {
+    const id = btn.dataset.poi;
+    btn.classList.add('active');
+    btn.addEventListener('click', () => {
+        poiVisible[id] = !poiVisible[id];
+        if (poiVisible[id]) map.addLayer(poiLayers[id]);
+        else map.removeLayer(poiLayers[id]);
+        btn.classList.toggle('active', poiVisible[id]);
+    });
 });
 
 // ─── Serializer ───────────────────────────────────────────────────────────────

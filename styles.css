@@ -129,16 +129,67 @@ textarea { resize: vertical; min-height: 36px; font-family: inherit; }
 }
 
 .loc-label {
-    color: #fff; text-shadow: 0 0 3px #000, 0 0 2px #000, 1px 1px 0 #000;
-    font-size: 11px; font-weight: 500; white-space: nowrap;
-    pointer-events: none; background: transparent; border: none;
-    transform: translate(-50%, -50%);
+    color: #fff;
+    text-shadow: 0 0 4px #000, 0 0 3px #000, 0 1px 2px #000;
+    white-space: nowrap;
+    pointer-events: none;
+    background: transparent;
+    border: none;
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    width: auto !important;
+    height: auto !important;
+    transform: translateX(-50%);
+    text-align: center;
 }
-.loc-capital { font-size: 14px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; }
-.loc-city { font-size: 12px; font-weight: 600; }
-.loc-village { font-size: 11px; font-weight: 500; }
-.loc-local { font-size: 10px; font-weight: 400; color: #d9d9d9; }
+.loc-capital {
+    font-size: 15px; font-weight: 700;
+    letter-spacing: 1.5px; text-transform: uppercase;
+    color: #fff;
+}
+.loc-city {
+    font-size: 12px; font-weight: 600;
+    letter-spacing: 0.8px; text-transform: uppercase;
+    color: #f0f0f0;
+}
+.loc-village {
+    font-size: 11px; font-weight: 500;
+    color: #e0e0e0;
+}
+.loc-local {
+    font-size: 10px; font-weight: 400;
+    color: #bdbdbd; font-style: italic;
+}
+
+/* POI icon markers (police, fire, medical, water) */
+.poi-icon {
+    background: rgba(20, 22, 25, 0.85);
+    border: 2px solid #fff;
+    border-radius: 50%;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+    width: 18px !important;
+    height: 18px !important;
+}
+.poi-police  { border-color: #3b82f6; background: radial-gradient(rgba(59,130,246,0.9), rgba(30,64,175,0.95)); }
+.poi-fire    { border-color: #ef4444; background: radial-gradient(rgba(239,68,68,0.9), rgba(153,27,27,0.95)); }
+.poi-medical { border-color: #22c55e; background: radial-gradient(rgba(34,197,94,0.9), rgba(21,128,61,0.95)); }
+.poi-water   { border-color: #06b6d4; background: radial-gradient(rgba(6,182,212,0.9), rgba(14,116,144,0.95)); }
+
+.poi-tooltip {
+    background: rgba(20, 22, 25, 0.9); color: var(--fg);
+    border: 1px solid var(--border); padding: 2px 6px; border-radius: 3px;
+    font: 11px -apple-system, "Segoe UI", Roboto, sans-serif; box-shadow: none;
+}
+.poi-tooltip::before { display: none; }
+
+/* Toolbar POI toggles */
+.poi-toggle {
+    padding: 4px 8px; font-size: 14px;
+    filter: grayscale(1) opacity(0.45);
+    transition: filter 0.15s, background 0.15s;
+}
+.poi-toggle.active { filter: none; }
+.poi-toggle:hover:not(:disabled) { background: var(--bg3); border-color: var(--border); filter: none; }
+#btn-labels.off { filter: grayscale(1) opacity(0.5); }
 
 .zone-group { margin-top: 8px; }
 .zone-group:first-of-type { margin-top: 0; }
