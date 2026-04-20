@@ -417,7 +417,7 @@ function startDragCircleCenter(idx, e) {
     const onUp = () => { map.off('mousemove', onMove); map.off('mouseup', onUp); map.dragging.enable(); };
     map.on('mousemove', onMove);
     map.on('mouseup', onUp);
-    selectZone('circle', idx);
+    selectZone('circle', idx, false);
 }
 
 function startDragCircleRadius(idx, e) {
@@ -435,7 +435,7 @@ function startDragCircleRadius(idx, e) {
     const onUp = () => { map.off('mousemove', onMove); map.off('mouseup', onUp); map.dragging.enable(); };
     map.on('mousemove', onMove);
     map.on('mouseup', onUp);
-    selectZone('circle', idx);
+    selectZone('circle', idx, false);
 }
 
 function startDragPolygonBody(idx, e) {
@@ -455,7 +455,7 @@ function startDragPolygonBody(idx, e) {
     const onUp = () => { map.off('mousemove', onMove); map.off('mouseup', onUp); map.dragging.enable(); };
     map.on('mousemove', onMove);
     map.on('mouseup', onUp);
-    selectZone('polygon', idx);
+    selectZone('polygon', idx, false);
 }
 
 function startDragPolygonVertex(idx, vi, e) {
@@ -472,7 +472,7 @@ function startDragPolygonVertex(idx, vi, e) {
     const onUp = () => { map.off('mousemove', onMove); map.off('mouseup', onUp); map.dragging.enable(); };
     map.on('mousemove', onMove);
     map.on('mouseup', onUp);
-    selectZone('polygon', idx);
+    selectZone('polygon', idx, false);
 }
 
 const round2 = (v) => Math.round(v * 100) / 100;
@@ -488,7 +488,7 @@ function refreshActiveLayer(prev) {
     if (prev.kind === 'polygon' && prev.idx < (state.config?.Zones?.Polygons?.length ?? 0)) refreshPolygonLayer(prev.idx);
 }
 
-function selectZone(kind, idx) {
+function selectZone(kind, idx, pan = true) {
     const prev = state.active;
     state.active = (kind && idx >= 0) ? { kind, idx } : null;
     refreshActiveLayer(prev);
@@ -497,7 +497,7 @@ function selectZone(kind, idx) {
         else refreshPolygonLayer(idx);
     }
     renderZoneList();
-    if (state.active) {
+    if (state.active && pan) {
         if (kind === 'circle') {
             const z = state.config.Zones.Circles[idx];
             map.panTo(toLatLng(z.Center[0], z.Center[2]));
