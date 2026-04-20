@@ -688,6 +688,7 @@ function enablePanel(on) {
     [el.msgBlocked, el.adminBypass, el.blkInput, el.blkAdd, el.wlInput, el.wlAdd].forEach(x => x.disabled = !on);
     document.getElementById('btn-save').disabled = !on || !state.fileHandle;
     document.getElementById('btn-download').disabled = !on;
+    document.getElementById('btn-publish').disabled = !on;
     document.getElementById('btn-add-circle').disabled = !on;
     document.getElementById('btn-add-polygon').disabled = !on;
 }
@@ -1110,6 +1111,60 @@ function downloadFile() {
 document.getElementById('btn-open').addEventListener('click', openFile);
 document.getElementById('btn-save').addEventListener('click', saveFile);
 document.getElementById('btn-download').addEventListener('click', downloadFile);
+document.getElementById('btn-publish').addEventListener('click', publishConfig);
+
+// ─── Publish to GitHub ───────────────────────────────────────────────────────
+const GH_OWNER = 'novikovmxd';
+const GH_REPO = 'dayz-nobuild-editor';
+const GH_PATH = 'public-config.json';
+
+async function publishConfig() {
+    if (!state.config) return;
+    let pat = localStorage.getItem('gh-pat');
+    if (!pat) {
+        pat = prompt(
+            'GitHub Personal Access Token (fine-grained, scope "Contents: Read and Write" на репо dayz-nobuild-editor).\n' +
+            'Создать: https://github.com/settings/personal-access-tokens/new'
+        );
+        if (!pat) return;
+        pat = pat.trim();
+        localStorage.setItem('gh-pat', pat);
+    }
+    const headers = { 'Authorization': `Bearer ${pat}`, 'Accept': 'application/vnd.github+json' };
+    const url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_PATH}`;
+
+    let sha;
+    try {
+        const r = await fetch(url, { headers });
+        if (r.ok) sha = (await r.json()).sha;
+        else if (r.status === 401 || r.status === 403) {
+            localStorage.removeItem('gh-pat');
+            toast('PAT невалидный, попробуй ещё раз', 'err');
+            return;
+        }
+    } catch { /* network / 404 → первая публикация */ }
+
+    const text = serializeConfig(state.config);
+    const bytes = new TextEncoder().encode(text);
+    let bin = '';
+    for (const b of bytes) bin += String.fromCharCode(b);
+    const content = btoa(bin);
+    const body = {
+        message: `publish: update nobuild zones (${new Date().toISOString().slice(0, 19)}Z)`,
+        content,
+    };
+    if (sha) body.sha = sha;
+
+    toast('Публикация…');
+    const resp = await fetch(url, { method: 'PUT', headers, body: JSON.stringify(body) });
+    if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ message: resp.statusText }));
+        if (resp.status === 401 || resp.status === 403) localStorage.removeItem('gh-pat');
+        toast(`Ошибка: ${err.message}`, 'err');
+        return;
+    }
+    toast('Опубликовано ✓ — viewer.html обновится через ~30с', 'ok');
+}
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
 const toastEl = document.getElementById('toast');

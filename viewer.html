@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>NoBuildZones — карта зон</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header id="topbar">
+    <div class="brand">🚫 NoBuildZones</div>
+    <div class="actions">
+        <button id="btn-layer">🗺 Топо</button>
+        <button id="btn-labels" title="Скрыть/показать подписи">🏷 Подписи</button>
+        <span id="updated" class="filename">— загрузка —</span>
+    </div>
+    <div class="coord-hud" id="coord-hud"></div>
+</header>
+
+<main id="workspace-viewer">
+    <div id="map"></div>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
+<script type="module" src="viewer.js"></script>
+</body>
+</html>
