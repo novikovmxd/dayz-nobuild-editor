@@ -134,6 +134,9 @@ const ICON_HASH = {
     'medic-medium':        'd29f5a23.webp',
     'food-waterpump':      '5175d19c.webp',
     'landmark-watertower': '0fbc87b4.webp',
+    'military-high':       'f03d9844.webp',
+    'military-medium':     '22ac8aa9.webp',
+    'military-low':        '3356d5a5.webp',
 };
 const POI_CATEGORIES = {
     police: {
@@ -165,6 +168,14 @@ const POI_CATEGORIES = {
             { key: 'land_misc_well_pump_yellow', icon: 'food-waterpump',      size: 14 },
             { key: 'land_water_station',         icon: 'landmark-watertower', size: 16 },
         ],
+    },
+    military: {
+        label: 'Военка',
+        // Dynamic-filter: all f=military buildings (plus prison/ship variants tagged military),
+        // but skip dynamic convoys and heli-crashes — user requested only static high/medium/low tiers.
+        filter: (entry) => entry?.f === 'military' && (entry.w === 'high' || entry.w === 'medium' || entry.w === 'low'),
+        iconFor: (entry) => `military-${entry.w}`,
+        sizeFor: (entry) => entry.w === 'high' ? 16 : entry.w === 'medium' ? 14 : 12,
     },
 };
 const poiLayers = {};         // id → L.layerGroup
@@ -202,33 +213,51 @@ async function loadMapData() {
 
         // POI icons — use xam.nu's own sprite images for visual parity
         const icons = d.markers?.icons ?? {};
-        for (const [id, cfg] of Object.entries(POI_CATEGORIES)) {
-            for (const b of cfg.buildings) {
-                const entry = icons[b.key];
-                if (!entry?.p) continue;
-                const hash = ICON_HASH[b.icon];
-                if (!hash) continue;
-                const iconUrl = XAM_ICON_BASE + hash;
-                const iconSize = b.size || 16;
-                const leafletIcon = L.icon({
-                    iconUrl,
-                    iconSize: [iconSize, iconSize],
-                    iconAnchor: [iconSize / 2, iconSize / 2],
-                    className: `poi-sprite poi-${id}`,
+        const iconCache = {}; // key → L.icon
+        const getLeafletIcon = (id, iconName, size) => {
+            const cacheKey = `${id}|${iconName}|${size}`;
+            if (iconCache[cacheKey]) return iconCache[cacheKey];
+            const hash = ICON_HASH[iconName];
+            if (!hash) return null;
+            iconCache[cacheKey] = L.icon({
+                iconUrl: XAM_ICON_BASE + hash,
+                iconSize: [size, size],
+                iconAnchor: [size / 2, size / 2],
+                className: `poi-sprite poi-${id}`,
+            });
+            return iconCache[cacheKey];
+        };
+        const placeMarker = (id, label, entry, iconName, size) => {
+            const leafletIcon = getLeafletIcon(id, iconName, size);
+            if (!leafletIcon) return;
+            for (const pt of entry.p) {
+                const lat = pt?.[0]?.[0];
+                const lng = pt?.[0]?.[1];
+                if (typeof lat !== 'number' || typeof lng !== 'number') continue;
+                const wx = lng * 60;
+                const wz = (lat + 256) * 60;
+                const marker = L.marker(toLatLng(wx, wz), {
+                    icon: leafletIcon,
+                    keyboard: false,
+                    zIndexOffset: -500,
                 });
-                for (const pt of entry.p) {
-                    const lat = pt?.[0]?.[0];
-                    const lng = pt?.[0]?.[1];
-                    if (typeof lat !== 'number' || typeof lng !== 'number') continue;
-                    const wx = lng * 60;
-                    const wz = (lat + 256) * 60;
-                    const marker = L.marker(toLatLng(wx, wz), {
-                        icon: leafletIcon,
-                        keyboard: false,
-                        zIndexOffset: -500,
-                    });
-                    marker.bindTooltip(cfg.label, { direction: 'top', offset: [0, -8], className: 'poi-tooltip' });
-                    poiLayers[id].addLayer(marker);
+                marker.bindTooltip(label, { direction: 'top', offset: [0, -8], className: 'poi-tooltip' });
+                poiLayers[id].addLayer(marker);
+            }
+        };
+        for (const [id, cfg] of Object.entries(POI_CATEGORIES)) {
+            if (cfg.buildings) {
+                for (const b of cfg.buildings) {
+                    const entry = icons[b.key];
+                    if (!entry?.p) continue;
+                    placeMarker(id, cfg.label, entry, b.icon, b.size || 16);
+                }
+            } else if (cfg.filter) {
+                for (const entry of Object.values(icons)) {
+                    if (!entry?.p || !cfg.filter(entry)) continue;
+                    const iconName = cfg.iconFor(entry);
+                    const size = cfg.sizeFor ? cfg.sizeFor(entry) : 16;
+                    placeMarker(id, cfg.label, entry, iconName, size);
                 }
             }
         }
